@@ -1,0 +1,47 @@
+name: anchor
+# Daily: every VIGIL org's ledger head as a dated release of this repository, then reported back to VIGIL.
+# This repository's own token creates the releases; VIGIL is reached only through its API with the platform
+# key in VIGIL_ANCHOR_KEY. No database credential exists here. Secrets (Settings > Secrets and variables >
+# Actions): VIGIL_URL (the API base, https://vigil.supertruth.ai) and VIGIL_ANCHOR_KEY (a VIGIL key with the
+# platform scope: VIGIL's scope for the publisher, which also creates orgs and changes plans, so it lives in
+# this repository's secrets and nowhere else). Repository settings: public; release immutability on before the
+# first release. The manifest is also committed here each day: GitHub disables a public repository's scheduled
+# workflows after 60 days without repository activity, and a commit a day is activity.
+on:
+  # The daily schedule is commented out until release immutability is on (repository Settings, the Releases
+  # section): a release made before that cannot be sealed. Restore the two lines below to arm it.
+  # schedule:
+  #   - cron: "30 6 * * *"   # 06:30 UTC daily, off the top of the hour; VIGIL's nightly adversary starts at 06:17
+  workflow_dispatch:
+concurrency: anchor         # never two runs at once: one release per date
+permissions:
+  contents: write           # create the release and upload the manifest; nothing else
+jobs:
+  anchor:
+    runs-on: ubuntu-latest
+    defaults: { run: { shell: bash } }
+    env:
+      VIGIL_URL: ${{ secrets.VIGIL_URL }}
+      VIGIL_ANCHOR_KEY: ${{ secrets.VIGIL_ANCHOR_KEY }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Check the secrets are present
+        run: |
+          if [ -z "$VIGIL_URL" ] || [ -z "$VIGIL_ANCHOR_KEY" ]; then
+            echo "VIGIL_URL and VIGIL_ANCHOR_KEY must be repository secrets (see README.md)."
+            exit 1
+          fi
+      - name: Publish today's anchor and report it to VIGIL
+        run: python anchor_heads.py | tee anchor.txt
+      - name: Commit the manifest too (a second copy, and the daily activity that keeps the schedule enabled)
+        run: |
+          git config user.name "vigil-anchor"
+          git config user.email "vigil-anchor@users.noreply.github.com"
+          git add anchors/
+          if git diff --cached --quiet; then echo "no new manifest to commit"; else git commit -m "Anchor $(date -u +%F)" && git push; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: anchor, path: anchor.txt, retention-days: 90 }
